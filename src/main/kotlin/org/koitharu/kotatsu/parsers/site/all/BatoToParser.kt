@@ -137,7 +137,12 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 					append("https://")
 					append(domain)
 
-					append("/browse?sort=")
+					if (domain == "bato.si") {
+						append("/v3x-search?sort=")
+					} else {
+						append("/browse?sort=")
+					}
+					
 					when (order) {
 						SortOrder.UPDATED -> append("update.za")
 						SortOrder.POPULARITY -> append("views_a.za")
