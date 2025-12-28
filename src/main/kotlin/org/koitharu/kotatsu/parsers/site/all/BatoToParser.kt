@@ -137,11 +137,8 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 					append("https://")
 					append(domain)
 
-					if (domain == "bato.si") {
-						append("/v3x-search?sort=")
-					} else {
-						append("/browse?sort=")
-					}
+					// Both v3 and v4 use the same /browse endpoint now
+					append("/browse?sort=")
 					
 					when (order) {
 						SortOrder.UPDATED -> append("update.za")
@@ -328,9 +325,10 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 	    val activeElement = body.selectFirst("nav ul.pagination li.page-item.active") 
 	        ?: body.selectFirst("ul.pagination > li.active")
 	        ?: body.selectFirst(".pagination .active")
+	        ?: body.selectFirst(".paginate_button.active")
 	
 	    return activeElement?.text()?.trim()?.toIntOrNull() 
-	        ?: body.parseFailed("Cannot determine current page at ${body.baseUri()}")
+	        ?: 1 // Default to page 1 if pagination not found
 	}
 
 	private suspend fun parseList(url: String, page: Int): List<Manga> {
@@ -343,25 +341,30 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 	    }
 	
 	    val activePage = getActivePage(body)
-	    if (activePage != page) {
+	    // For v4 (bato.si), pagination might not be accurate, so we skip this check
+	    if (domain != "bato.si" && activePage != page) {
 	        return emptyList()
 	    }
 	
-	    // v4 uses #series-list or a container with "item" class cards
-	    val root = body.selectFirst("#series-list, .series-list, #series-page") 
-	        ?: body.parseFailed("Cannot find manga list container")
+	    // v3 uses .item-body container, v4 uses .item or different structure
+	    val root = body.selectFirst(".series-list, #series-list, .browse-main-content") 
+	        ?: body
 	
-	    return root.select(".item, .line-b").map { div ->
-	        val a = div.selectFirst("a.item-cover, a.item-title") ?: div.selectFirst("a")
-	        val href = a?.attrAsRelativeUrl("href") ?: ""
-	        val title = div.selectFirst(".item-title, .item-text")?.text() ?: "Unknown"
+	    return root.select(".item, .line-b").mapNotNull { div ->
+	        val a = div.selectFirst("a.item-cover, a.item-title, a[href*='/title/']") ?: div.selectFirst("a")
+	        if (a == null) return@mapNotNull null
+	        
+	        val href = a.attrAsRelativeUrl("href") ?: ""
+	        if (href.isEmpty()) return@mapNotNull null
+	        
+	        val title = div.selectFirst(".item-title, h3, .manga-title")?.text() ?: "Unknown"
 	        
 	        Manga(
 	            id = generateUid(href),
 	            title = title,
 	            altTitles = setOfNotNull(div.selectFirst(".item-alias")?.textOrNull()?.takeUnless { it == title }),
 	            url = href,
-	            publicUrl = a?.absUrl("href") ?: "",
+	            publicUrl = a.absUrl("href"),
 	            rating = RATING_UNKNOWN,
 	            contentRating = null,
 	            coverUrl = div.selectFirst("img")?.absUrl("src"),
