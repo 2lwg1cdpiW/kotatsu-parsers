@@ -96,6 +96,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 
 	override val configKeyDomain = ConfigKey.Domain(
 		"bato.to",
+        "bato.si",
 		"batocomic.com",
 		"batocomic.net",
 		"batocomic.org",
