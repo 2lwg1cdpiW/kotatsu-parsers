@@ -137,24 +137,46 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 					append("https://")
 					append(domain)
 
-					// Both v3 and v4 use the same /browse endpoint now
-					append("/browse?sort=")
-					
-					when (order) {
-						SortOrder.UPDATED -> append("update.za")
-						SortOrder.POPULARITY -> append("views_a.za")
-						SortOrder.NEWEST -> append("create.za")
-						SortOrder.ALPHABETICAL -> append("title.az")
-						SortOrder.POPULARITY_YEAR -> append("views_y.za")
-						SortOrder.POPULARITY_MONTH -> append("views_m.za")
-						SortOrder.POPULARITY_WEEK -> append("views_w.za")
-						SortOrder.POPULARITY_TODAY -> append("views_d.za")
-						SortOrder.POPULARITY_HOUR -> append("views_h.za")
-						else -> append("update.za")
+					// bato.si uses /v3x-search, others use /browse
+					if (domain == "bato.si") {
+						append("/v3x-search?sort=")
+						when (order) {
+							SortOrder.UPDATED -> append("field_upload")
+							SortOrder.POPULARITY -> append("views_a.za")
+							SortOrder.NEWEST -> append("field_public")
+							SortOrder.ALPHABETICAL -> append("field_name")
+							SortOrder.POPULARITY_YEAR -> append("views_d360")
+							SortOrder.POPULARITY_MONTH -> append("views_d030")
+							SortOrder.POPULARITY_WEEK -> append("views_d007")
+							SortOrder.POPULARITY_TODAY -> append("views_d000")
+							SortOrder.POPULARITY_HOUR -> append("views_h001")
+							else -> append("field_upload")
+						}
+						append("&")
+					} else {
+						append("/browse?sort=")
+						
+						when (order) {
+							SortOrder.UPDATED -> append("update.za")
+							SortOrder.POPULARITY -> append("views_a.za")
+							SortOrder.NEWEST -> append("create.za")
+							SortOrder.ALPHABETICAL -> append("title.az")
+							SortOrder.POPULARITY_YEAR -> append("views_y.za")
+							SortOrder.POPULARITY_MONTH -> append("views_m.za")
+							SortOrder.POPULARITY_WEEK -> append("views_w.za")
+							SortOrder.POPULARITY_TODAY -> append("views_d.za")
+							SortOrder.POPULARITY_HOUR -> append("views_h.za")
+							else -> append("update.za")
+						}
+						append("&")
 					}
 
 					filter.states.oneOrThrowIfMany()?.let {
-						append("&release=")
+						if (domain == "bato.si") {
+							append("release=")
+						} else {
+							append("release=")
+						}
 						append(
 							when (it) {
 								MangaState.ONGOING -> "ongoing"
@@ -165,49 +187,72 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 								else -> throw IllegalArgumentException("$it not supported")
 							},
 						)
+						append("&")
 					}
 
-					filter.locale?.let {
-						append("&langs=")
-						if (it.language == "in") {
-							append("id")
-						} else {
-							append(it.language)
+					if (domain == "bato.si") {
+						filter.locale?.let {
+							append("lang=")
+							if (it.language == "in") {
+								append("id")
+							} else {
+								append(it.language)
+							}
+							append("&")
 						}
 
-					}
+						filter.originalLocale?.let {
+							append("orig=")
+							if (it.language == "in") {
+								append("id")
+							} else {
+								append(it.language)
+							}
+							append("&")
+						}
+					} else {
+						filter.locale?.let {
+							append("langs=")
+							if (it.language == "in") {
+								append("id")
+							} else {
+								append(it.language)
+							}
+							append("&")
+						}
 
-					filter.originalLocale?.let {
-						append("&origs=")
-						if (it.language == "in") {
-							append("id")
-						} else {
-							append(it.language)
+						filter.originalLocale?.let {
+							append("origs=")
+							if (it.language == "in") {
+								append("id")
+							} else {
+								append(it.language)
+							}
+							append("&")
 						}
 					}
 
-					append("&genres=")
+					append("genres=")
 					if (filter.tags.isNotEmpty()) {
 						filter.tags.joinTo(this, ",") { it.key }
 					}
 
-					append("|")
-					if (filter.tagsExclude.isNotEmpty()) {
+					if (!filter.tagsExclude.isEmpty()) {
+						append("|")
 						filter.tagsExclude.joinTo(this, ",") { it.key }
 					}
+					append("&")
 
 					if (filter.contentRating.isNotEmpty()) {
 						filter.contentRating.oneOrThrowIfMany()?.let {
-							append(
-								when (it) {
-									ContentRating.SAFE -> append(",gore,bloody,violence,ecchi,adult,mature,smut,hentai")
-									else -> append("")
-								},
-							)
+							when (it) {
+								ContentRating.SAFE -> append("content=gore,bloody,violence,ecchi,adult,mature,smut,hentai&")
+								else -> {}
+							}
 						}
 					}
 
-					append("&page=")
+					append("page=")
 					append(page.toString())
 				}
 
@@ -313,7 +358,11 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		val url = buildString {
 			append("https://")
 			append(domain)
-			append("/search?word=")
+			if (domain == "bato.si") {
+				append("/v3x-search?word=")
+			} else {
+				append("/search?word=")
+			}
 			append(query.replace(' ', '+'))
 			append("&page=")
 			append(page)
