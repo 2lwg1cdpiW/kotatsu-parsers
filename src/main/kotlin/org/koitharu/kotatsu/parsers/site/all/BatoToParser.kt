@@ -324,43 +324,61 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 		return parseList(url, page)
 	}
 
-	private fun getActivePage(body: Element): Int = body.select("nav ul.pagination > li.page-item.active")
-		.lastOrNull()
-		?.text()
-		?.toIntOrNull() ?: body.parseFailed("Cannot determine current page")
+	private fun getActivePage(body: Element): Int {
+	    val activeElement = body.selectFirst("nav ul.pagination li.page-item.active") 
+	        ?: body.selectFirst("ul.pagination > li.active")
+	        ?: body.selectFirst(".pagination .active")
+	
+	    return activeElement?.text()?.trim()?.toIntOrNull() 
+	        ?: body.parseFailed("Cannot determine current page at ${body.baseUri()}")
+	}
 
 	private suspend fun parseList(url: String, page: Int): List<Manga> {
-		val body = webClient.httpGet(url).parseHtml().body()
-		if (body.selectFirst(".browse-no-matches") != null) {
-			return emptyList()
-		}
-		val activePage = getActivePage(body)
-		if (activePage != page) {
-			return emptyList()
-		}
-		val root = body.requireElementById("series-list")
-		return root.children().map { div ->
-			val a = div.selectFirstOrThrow("a")
-			val href = a.attrAsRelativeUrl("href")
-			val title = div.selectFirstOrThrow(".item-title").text()
-			Manga(
-				id = generateUid(href),
-				title = title,
-				altTitles = setOfNotNull(div.selectFirst(".item-alias")?.textOrNull()?.takeUnless { it == title }),
-				url = href,
-				publicUrl = a.absUrl("href"),
-				rating = RATING_UNKNOWN,
-				contentRating = null,
-				coverUrl = div.selectFirst("img[src]")?.absUrl("src"),
-				largeCoverUrl = null,
-				description = null,
-				tags = div.selectFirst(".item-genre")?.parseTags().orEmpty(),
-				state = null,
-				authors = emptySet(),
-				source = source,
-			)
-		}
+	    val response = webClient.httpGet(url).parseHtml()
+	    val body = response.body()
+	    
+	    // Check if the page is empty or 404
+	    if (body.selectFirst(".browse-no-matches, .alert-warning") != null) {
+	        return emptyList()
+	    }
+	
+	    val activePage = getActivePage(body)
+	    if (activePage != page) {
+	        return emptyList()
+	    }
+	
+	    // v4 uses #series-list or a container with "item" class cards
+	    val root = body.selectFirst("#series-list, .series-list, #series-page") 
+	        ?: body.parseFailed("Cannot find manga list container")
+	
+	    return root.select(".item, .line-b").map { div ->
+	        val a = div.selectFirst("a.item-cover, a.item-title") ?: div.selectFirst("a")
+	        val href = a?.attrAsRelativeUrl("href") ?: ""
+	        val title = div.selectFirst(".item-title, .item-text")?.text() ?: "Unknown"
+	        
+	        Manga(
+	            id = generateUid(href),
+	            title = title,
+	            altTitles = setOfNotNull(div.selectFirst(".item-alias")?.textOrNull()?.takeUnless { it == title }),
+	            url = href,
+	            publicUrl = a?.absUrl("href") ?: "",
+	            rating = RATING_UNKNOWN,
+	            contentRating = null,
+	            coverUrl = div.selectFirst("img")?.absUrl("src"),
+	            largeCoverUrl = null,
+	            description = null,
+	            tags = div.select(".item-genre span, .genres span").mapToSet { span ->
+	                val text = span.text()
+	                MangaTag(text.toTitleCase(), text.lowercase().replace(' ', '_'), source)
+	            },
+	            state = null,
+	            authors = emptySet(),
+	            source = source,
+	        )
+	    }
 	}
+
+
 
 	private fun Element.parseTags() = children().mapToSet { span ->
 		val text = span.ownText()
