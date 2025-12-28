@@ -140,17 +140,30 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 					// bato.si uses /v3x-search, others use /browse
 					if (domain == "bato.si") {
 						append("/v3x-search?sort=")
-						when (order) {
-							SortOrder.UPDATED -> append("field_upload")
-							SortOrder.POPULARITY -> append("views_a.za")
-							SortOrder.NEWEST -> append("field_public")
-							SortOrder.ALPHABETICAL -> append("field_name")
-							SortOrder.POPULARITY_YEAR -> append("views_d360")
-							SortOrder.POPULARITY_MONTH -> append("views_d030")
-							SortOrder.POPULARITY_WEEK -> append("views_d007")
-							SortOrder.POPULARITY_TODAY -> append("views_d000")
-							SortOrder.POPULARITY_HOUR -> append("views_h001")
-							else -> append("field_upload")
+						// Check if we have a state filter for bato.si
+						val hasStateFilter = filter.states.isNotEmpty()
+						if (hasStateFilter) {
+							when (filter.states.first()) {
+								MangaState.ONGOING -> append("status_doing")
+								MangaState.FINISHED -> append("status_completed")
+								MangaState.ABANDONED -> append("status_dropped")
+								MangaState.PAUSED -> append("status_on_hold")
+								MangaState.UPCOMING -> append("field_upload") // fallback
+								else -> append("field_upload")
+							}
+						} else {
+							when (order) {
+								SortOrder.UPDATED -> append("field_upload")
+								SortOrder.POPULARITY -> append("views_a.za")
+								SortOrder.NEWEST -> append("field_public")
+								SortOrder.ALPHABETICAL -> append("field_name")
+								SortOrder.POPULARITY_YEAR -> append("views_d360")
+								SortOrder.POPULARITY_MONTH -> append("views_d030")
+								SortOrder.POPULARITY_WEEK -> append("views_d007")
+								SortOrder.POPULARITY_TODAY -> append("views_d000")
+								SortOrder.POPULARITY_HOUR -> append("views_h001")
+								else -> append("field_upload")
+							}
 						}
 						append("&")
 					} else {
@@ -169,25 +182,22 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
 							else -> append("update.za")
 						}
 						append("&")
-					}
-
-					filter.states.oneOrThrowIfMany()?.let {
-						if (domain == "bato.si") {
+						
+						// For non-bato.si, use release parameter
+						filter.states.oneOrThrowIfMany()?.let {
 							append("release=")
-						} else {
-							append("release=")
+							append(
+								when (it) {
+									MangaState.ONGOING -> "ongoing"
+									MangaState.FINISHED -> "completed"
+									MangaState.ABANDONED -> "cancelled"
+									MangaState.PAUSED -> "hiatus"
+									MangaState.UPCOMING -> "pending"
+									else -> throw IllegalArgumentException("$it not supported")
+								},
+							)
+							append("&")
 						}
-						append(
-							when (it) {
-								MangaState.ONGOING -> "ongoing"
-								MangaState.FINISHED -> "completed"
-								MangaState.ABANDONED -> "cancelled"
-								MangaState.PAUSED -> "hiatus"
-								MangaState.UPCOMING -> "pending"
-								else -> throw IllegalArgumentException("$it not supported")
-							},
-						)
-						append("&")
 					}
 
 					if (domain == "bato.si") {
