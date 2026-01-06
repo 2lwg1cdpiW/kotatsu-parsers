@@ -142,37 +142,35 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
                                         if (domain == "bato.si") {
                                                 append("/v3x-search?sort=")
 
-                                                when (order) {
-                                                        SortOrder.UPDATED -> append("update")
-                                                        SortOrder.POPULARITY -> append("views_a")
-                                                        SortOrder.NEWEST -> append("create")
-                                                        SortOrder.ALPHABETICAL -> append("title")
-                                                        SortOrder.RATING -> append("score")
-                                                        SortOrder.POPULARITY_YEAR -> append("views_d360")
-                                                        SortOrder.POPULARITY_MONTH -> append("views_d030")
-                                                        SortOrder.POPULARITY_WEEK -> append("views_d007")
-                                                        SortOrder.POPULARITY_TODAY -> append("views_d000")
-                                                        else -> append("update")
+                                                // Check if we have a state filter for bato.si
+                                                val hasStateFilter = filter.states.isNotEmpty()
+                                                if (hasStateFilter) {
+                                                        when (filter.states.first()) {
+                                                                MangaState.ONGOING -> append("status_doing")
+                                                                MangaState.FINISHED -> append("status_completed")
+                                                                MangaState.ABANDONED -> append("status_dropped")
+                                                                MangaState.PAUSED -> append("status_on_hold")
+                                                                MangaState.UPCOMING -> append("field_upload")
+                                                                else -> append("update")
+                                                        }
+                                                } else {
+                                                        when (order) {
+                                                                SortOrder.UPDATED -> append("update")
+                                                                SortOrder.POPULARITY -> append("views_a")
+                                                                SortOrder.NEWEST -> append("create")
+                                                                SortOrder.ALPHABETICAL -> append("title")
+                                                                SortOrder.RATING -> append("score")
+                                                                SortOrder.POPULARITY_YEAR -> append("views_d360")
+                                                                SortOrder.POPULARITY_MONTH -> append("views_d030")
+                                                                SortOrder.POPULARITY_WEEK -> append("views_d007")
+                                                                SortOrder.POPULARITY_TODAY -> append("views_d000")
+                                                                else -> append("update")
+                                                        }
                                                 }
                                                 append("&")
 
-                                                // Filter for state
-                                                val hasStateFilter = filter.states.isNotEmpty()
-                                                if (hasStateFilter) {
-                                                        append("release=")
-                                                        when (filter.states.first()) {
-                                                                MangaState.ONGOING -> append("ongoing")
-                                                                MangaState.FINISHED -> append("completed")
-                                                                MangaState.ABANDONED -> append("cancelled")
-                                                                MangaState.PAUSED -> append("hiatus")
-                                                                MangaState.UPCOMING -> append("pending")
-                                                                else -> {}
-                                                        }
-                                                        append("&")
-                                                }
-
                                                 filter.locale?.let {
-                                                        append("langs=")
+                                                        append("lang=")
                                                         if (it.language == "in") {
                                                                 append("id")
                                                         } else {
@@ -182,7 +180,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
                                                 }
 
                                                 filter.originalLocale?.let {
-                                                        append("origs=")
+                                                        append("orig=")
                                                         if (it.language == "in") {
                                                                 append("id")
                                                         } else {
@@ -395,7 +393,7 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
             val body = response.body()
             
             // Check if the page is empty or 404
-            if (body.selectFirst(".browse-no-matches, .alert-warning") != null) {
+            if (body.selectFirst(".browse-no-matches, .alert-warning, .no-manga-found, [class*='empty'], [class*='not-found']") != null) {
                 return emptyList()
             }
         
@@ -404,30 +402,46 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
                 return emptyList()
             }
         
-            // v3 uses .series-list, v4 uses .item-list or the cards directly
-            val root = body.selectFirst(".series-list, #series-list, .browse-main-content, .item-list") 
+            // Try different container selectors for various versions
+            val root = body.selectFirst(".series-list, #series-list, .browse-main-content, .item-list, .manga-list, .comics-grid, main, .main-content") 
                 ?: body
         
-            return root.select(".item, .line-b").mapNotNull { div ->
+            // Try different item selectors
+            val items = root.select(".item, .line-b, .manga-item, .comic-item, .series-item, li[data-series-id], [class*='manga']:has(a[href*='/title/'])").takeIf { it.isNotEmpty() }
+                ?: root.select("a[href*='/title/']:has(img)").mapNotNull { it.parent()?.parent() }
+                ?: root.select("div:has(> a[href*='/title/']):has(img)")
+            
+            if (items.isEmpty()) {
+                return emptyList()
+            }
+
+            return items.mapNotNull { div ->
                 // Title and Link
-                val a = div.selectFirst("a.item-cover, a.item-title, a[href*='/title/']") ?: div.selectFirst("a")
+                val a = div.selectFirst("a.item-cover, a.item-title, a[href*='/title/'], a[href*='/series/']") 
+                    ?: div.selectFirst("a[href*='/']")
                 if (a == null) return@mapNotNull null
                 
                 val href = a.attrAsRelativeUrl("href") ?: ""
-                if (href.isEmpty()) return@mapNotNull null
+                if (href.isEmpty() || !href.contains("/title/")) return@mapNotNull null
                 
-                // Title extraction
-                val title = div.selectFirst(".item-title, h3, .manga-title, .title")?.text() ?: "Unknown"
+                // Title extraction - try multiple selectors
+                val title = div.selectFirst(".item-title, h3, h2, .manga-title, .title, .series-title, [class*='title']")?.text()?.trim()
+                    ?: a.attr("title").takeIf { it.isNotEmpty() }
+                    ?: a.text().trim()
+                    ?: return@mapNotNull null
+                
+                if (title.isEmpty()) return@mapNotNull null
                 
                 // Cover extraction
                 val img = div.selectFirst("img")
                 val coverUrl = img?.absUrl("src")?.takeIf { it.isNotEmpty() }
                     ?: img?.absUrl("data-src")?.takeIf { it.isNotEmpty() }
+                    ?: img?.attr("src")?.takeIf { it.isNotEmpty() }
 
                 Manga(
                     id = generateUid(href),
                     title = title,
-                    altTitles = setOfNotNull(div.selectFirst(".item-alias")?.textOrNull()?.takeUnless { it == title }),
+                    altTitles = setOfNotNull(div.selectFirst(".item-alias, [class*='alt-title']")?.textOrNull()?.takeUnless { it == title }),
                     url = href,
                     publicUrl = a.absUrl("href"),
                     rating = RATING_UNKNOWN,
@@ -435,8 +449,8 @@ internal class BatoToParser(context: MangaLoaderContext) : PagedMangaParser(
                     coverUrl = coverUrl,
                     largeCoverUrl = null,
                     description = null,
-                    tags = div.select(".item-genre span, .genres span, .item-genre a").mapToSet { span ->
-                        val text = span.text()
+                    tags = div.select(".item-genre span, .genres span, .item-genre a, [class*='genre'] a, [class*='tag'] a").mapToSet { span ->
+                        val text = span.text().trim()
                         MangaTag(text.toTitleCase(), text.lowercase().replace(' ', '_'), source)
                     },
                     state = null,
